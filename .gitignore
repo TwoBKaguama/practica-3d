@@ -7,3 +7,6 @@
 
 # Exportaciones (la web la genera GitHub Actions)
 /build/
+
+# Panel de diseno generado (lleva datos de jugadores)
+/tools/dashboard.html

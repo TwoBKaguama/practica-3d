@@ -35,8 +35,20 @@ Al empezar se pide un nickname. Cada intento queda guardado en
 Se registra el tiempo, el número de intento, las estrellas, la gema, los
 corazones, las caídas, la medalla y el resultado.
 
+Desde esta versión también se guardan, en segundo plano, la sesión de juego,
+cada caída (dónde y si fue al agua o al vacío), los checkpoints, el tiempo de
+oro y dónde termina cada intento.
+
 - **En el juego:** la pantalla de inicio muestra el top 5 y "Ver tabla
-  completa" abre las pestañas por nivel, General y Mi historial.
+  completa" abre las pestañas por nivel, General y Mi historial, con vista
+  "Cerca de mí", divisiones por medalla o liga y lo que falta para pasar al
+  siguiente. Pulsar un jugador (o "Mis estadísticas") abre sus estadísticas:
+  resumen, gráfica de todos sus intentos en cada nivel y comparación con el
+  líder o contigo.
+- **Panel de diseño:** `python3 tools/dashboard.py --abrir` genera
+  `tools/dashboard.html` con gráficas y tablas interactivas (dificultad por
+  nivel, dónde se quedan los jugadores, mapa de caídas, reintentos, objetos
+  en los records, avisos de qué revisar). Solo lee la base.
 - **Fuera del juego:** `python3 tools/leaderboard.py --help`. Solo lee la base.
 
 Ruta de la base: en Linux `~/.local/share/godot/app_userdata/IA/aventura.db`, en

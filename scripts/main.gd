@@ -2,6 +2,8 @@
 #
 # Tambien lleva cada intento (tiempo, estrellas, gema, caidas...) y lo guarda
 # en la base SQLite al terminar, ya sea en la meta, sin vidas o abandonado.
+# Ademas registra en segundo plano datos para analizar el diseno: la sesion,
+# donde y por que cae el jugador y donde deja el intento.
 #
 # Contrarreloj (niveles 4 y 5): cuenta atras con "3, 2, 1, YA", aros que dan
 # segundos, marea que sube mientras corre el reloj y que se traga al jugador
@@ -59,6 +61,8 @@ const SOUND_PATHS := {
 	"crumble": "res://assets/audio/sfx_crumble.wav",
 	"timeout": "res://assets/audio/sfx_timeout.wav",
 	"thunder": "res://assets/audio/sfx_thunder.wav",
+	"land": "res://assets/audio/sfx_land.wav",
+	"hurt": "res://assets/audio/sfx_hurt.wav",
 }
 ## Cuantos sonidos pueden sonar a la vez.
 const SFX_POOL_SIZE := 6
@@ -126,6 +130,12 @@ var _gem_found := false
 var _gem_total := 0
 var _hearts_taken := 0
 var _powers_taken := 0
+var _checkpoints_taken := 0
+## Caidas del intento en curso: {causa, pos, tiempo_ms}. Se guardan con el intento.
+var _death_log: Array = []
+var _session_id := -1
+var _star_combo := 0
+var _star_combo_time := 0.0
 
 # --- Contrarreloj ---
 var _trial := false
@@ -176,6 +186,7 @@ func _ready() -> void:
 	_hud.set_nickname(_nickname)
 	_hud.quit_pressed.connect(_quit_game)
 	_hud.board_query.connect(_on_board_query)
+	_hud.profile_requested.connect(_on_profile_requested)
 	_hud.pause_pressed.connect(_set_paused.bind(true))
 	_hud.resume_pressed.connect(_set_paused.bind(false))
 	_hud.restart_pressed.connect(_on_restart_pressed)
@@ -206,6 +217,10 @@ func _process(delta: float) -> void:
 		if _storm_timer <= 0.0:
 			_storm_timer = randf_range(4.0, 9.0)
 			_lightning()
+	if _star_combo > 0 and running:
+		_star_combo_time -= delta
+		if _star_combo_time <= 0.0:
+			_star_combo = 0
 	_watch_mouse_capture()
 
 
@@ -233,6 +248,7 @@ func _watch_mouse_capture() -> void:
 
 func _quit_game() -> void:
 	_end_attempt(DbScript.RESULT_ABANDONED)
+	_db.end_session(_session_id)
 	_db.close()
 	get_tree().quit()
 
@@ -309,18 +325,28 @@ func _start_level(index: int) -> void:
 		if node.has_signal("collected"):
 			node.collected.connect(_on_pickup_collected)
 		if node.has_signal("bounced"):
-			node.bounced.connect(func(_n: Node) -> void: play_sfx("spring", -3.0))
+			node.bounced.connect(func(_n: Node) -> void:
+				_camera_trauma(0.3)
+				play_sfx("spring", -3.0, randf_range(0.95, 1.05)))
 		if node.has_signal("boosted"):
-			node.boosted.connect(func(_n: Node) -> void: play_sfx("boost", -2.0))
+			node.boosted.connect(func(_n: Node) -> void:
+				_camera_trauma(0.25)
+				play_sfx("boost", -2.0, randf_range(0.95, 1.05)))
 		if node.has_signal("crumbled"):
-			node.crumbled.connect(func(_n: Node) -> void: play_sfx("crumble", -6.0))
+			node.crumbled.connect(func(_n: Node) -> void:
+				_camera_trauma(0.2)
+				play_sfx("crumble", -6.0, randf_range(0.95, 1.05)))
 
 	_lives = START_LIVES
 	_stars = 0
+	_star_combo = 0
+	_star_combo_time = 0.0
 	_deaths = 0
 	_gem_found = false
 	_hearts_taken = 0
 	_powers_taken = 0
+	_checkpoints_taken = 0
+	_death_log.clear()
 	_attempt_time = 0.0
 	_attempt_active = not _in_menu
 	_timer_running = _attempt_active
@@ -501,7 +527,7 @@ func _build_audio() -> void:
 
 # Toma un reproductor libre y suena. Si todos estan ocupados el efecto se
 # descarta: perder un sonido es mejor que cortar el que ya esta sonando.
-func play_sfx(sound_name: String, volume_db: float = 0.0) -> void:
+func play_sfx(sound_name: String, volume_db: float = 0.0, pitch: float = 1.0) -> void:
 	if not _sfx_streams.has(sound_name):
 		return
 	var raw: Variant = _sfx_streams[sound_name]
@@ -512,8 +538,16 @@ func play_sfx(sound_name: String, volume_db: float = 0.0) -> void:
 		if not player.playing:
 			player.stream = stream
 			player.volume_db = volume_db
+			player.pitch_scale = pitch
 			player.play()
 			return
+
+
+## Aplica trauma a la camara para screenshake en momentos clave
+func _camera_trauma(amount: float) -> void:
+	var camera := get_node_or_null("CameraYaw")
+	if camera != null and camera.has_method("add_trauma"):
+		camera.call("add_trauma", amount)
 
 
 # La musica vive en su propio reproductor, aparte del pool de efectos: asi los
@@ -561,14 +595,18 @@ func _on_pickup_collected(kind: String, node: Node) -> void:
 	match kind:
 		"star":
 			_stars += 1
-			play_sfx("star")
+			_star_combo_time = 1.8
+			var pitch := 1.0 + minf(_star_combo * 0.06, 0.48)
+			play_sfx("star", 0.0, pitch)
+			_star_combo += 1
 			_hud.set_stars(_stars, _star_total)
 			_hud.pulse_stars()
 			if _star_total > 0 and _stars >= _star_total:
 				_hud.show_banner("TODAS LAS ESTRELLAS", 2.0)
+				_camera_trauma(0.4)
 		"heart":
 			_hearts_taken += 1
-			play_sfx("heart")
+			play_sfx("heart", 0.0, 1.05)
 			if _lives < MAX_LIVES:
 				_lives += 1
 				_hud.set_lives(_lives, maxi(START_LIVES, _lives))
@@ -577,19 +615,22 @@ func _on_pickup_collected(kind: String, node: Node) -> void:
 				_hud.show_message("Vidas al maximo", 1.2)
 		"gem":
 			_gem_found = true
-			play_sfx("gem")
+			play_sfx("gem", 2.0, 1.1)
+			_camera_trauma(0.35)
 			_hud.set_gem(true)
 			_hud.show_banner("GEMA SECRETA", 1.6)
 		"power":
 			_powers_taken += 1
-			play_sfx("power")
+			play_sfx("power", 0.0, 1.05)
+			_camera_trauma(0.25)
 			_player.apply_boost(POWER_SECONDS)
 			_hud.show_message("¡Super salto!  Salta mucho mas alto", 1.8)
 		"time":
-			play_sfx("time")
+			play_sfx("time", 0.0, 1.05)
 			_add_time(float(_level_data.get("time_bonus", 3.0)), node.global_position)
 		"checkpoint":
 			play_sfx("checkpoint")
+			_checkpoints_taken += 1
 			_spawn_point = node.global_position + Vector3(0, 0.6, 0)
 			_hud.show_message("Checkpoint", 1.0)
 			if _trial and not _timed_out:
@@ -650,6 +691,11 @@ func _on_goal_reached() -> void:
 		var rank: Dictionary = _db.rank_of(_level_index + 1, _player_id)
 		if not rank.is_empty():
 			detalle += "  -  Puesto #%d de %d" % [int(rank["puesto"]), int(rank["total"])]
+		# El siguiente objetivo: cuanto falta para pasar al de arriba.
+		var rival: Dictionary = _db.rival_above(_level_index + 1, _player_id)
+		if not rival.is_empty():
+			var best_ms := mini(time_ms, int(prev_best.get("tiempo_ms", time_ms)))
+			detalle += "\nFaltan %.2f s para superar a %s (#%d)" % [(best_ms - int(rival["tiempo_ms"])) / 1000.0, rival["nickname"], int(rival["puesto"])]
 
 	var record := _stars > int(_best_stars.get(_level_index, -1))
 	if record:
@@ -690,6 +736,10 @@ func _on_player_died() -> void:
 	# El sonido de muerte suena desde aqui y no desde player.gd: la caida emite
 	# la senal, asi que sonaria dos veces si estuviera en los dos sitios.
 	play_sfx("death", -4.0)
+	play_sfx("hurt", -2.0, randf_range(0.85, 0.95))
+	_camera_trauma(0.8)
+	_hud.show_damage_flash(0.6)
+	_log_death()
 
 	if _trial:
 		_on_trial_fall()
@@ -796,6 +846,7 @@ func _on_time_out() -> void:
 	_timed_out = true
 	_timer_running = false
 	play_sfx("timeout")
+	_camera_trauma(0.85)
 	_hud.show_banner("¡SE ACABO EL TIEMPO!", 1.4)
 	_hud.flash(0.3)
 	var target: float = _player.global_position.y - _base_sea_y + 3.0
@@ -828,6 +879,7 @@ func _lightning() -> void:
 	var sun := get_node_or_null("Sun") as DirectionalLight3D
 	var env_node := get_node_or_null("WorldEnvironment") as WorldEnvironment
 	_hud.flash(randf_range(0.25, 0.45))
+	_camera_trauma(0.6)
 	if sun != null:
 		var tween := create_tween()
 		tween.tween_property(sun, "light_energy", 3.5, 0.04)
@@ -849,6 +901,9 @@ func _lightning() -> void:
 # descuenta despues, en _on_player_died, cuando termina de hundirse.
 func _on_player_splashed(_surface: Vector3) -> void:
 	play_sfx("splash")
+	play_sfx("hurt", -3.0, randf_range(0.95, 1.05))
+	_camera_trauma(0.7)
+	_hud.show_damage_flash(0.45)
 	_hud.set_underwater(true)
 
 
@@ -876,6 +931,22 @@ func _end_attempt(result: String, medal: Variant = null) -> int:
 		"caidas": _deaths,
 		"vidas_restantes": maxi(_lives, 0),
 		"medalla": medal,
+		"sesion_id": _session_id if _session_id >= 0 else null,
+		"par_ms": int(float(_level_data.get("par_time", 0.0)) * 1000.0),
+		"checkpoints": _checkpoints_taken,
+		"fin": _player.global_position,
+		"muertes": _death_log.duplicate(),
+	})
+
+
+# Donde y por que cae: hundirse en el agua (o la marea) o caer al vacio.
+func _log_death() -> void:
+	if not _attempt_active:
+		return
+	_death_log.append({
+		"causa": "agua" if _player.is_sinking() else "vacio",
+		"pos": _player.global_position,
+		"tiempo_ms": int(_attempt_time * 1000.0),
 	})
 
 
@@ -889,19 +960,91 @@ func _medal_for(seconds: float) -> String:
 	return "Bronce"
 
 
-func _on_board_query(target: String, tab: String, sort_by: String, filter: String) -> void:
+func _on_board_query(target: String, tab: String, sort_by: String, filter: String, view: String) -> void:
 	var rows: Array = []
+	var goal: Dictionary = {}
+	var limit := 5 if target == "preview" else 100
+	var near := view == "cerca" and _player_id >= 0
 	if _db.is_available():
 		if tab == "general":
-			rows = _db.general_board(filter, 5 if target == "preview" else 100)
+			rows = _db.general_board_around(_player_id) if near else _db.general_board(filter, limit)
+			var me: Array = _db.general_board_around(_player_id, 0) if _player_id >= 0 else []
+			if not me.is_empty():
+				goal = {"puesto": me[0]["puesto"], "total": _db.player_count(), "puntos": me[0]["puntos"]}
+			if target == "preview":
+				rows = _append_me(rows, me)
 		elif tab == "historial":
 			rows = _db.history(_nickname, 100) if _nickname != "" else []
 		else:
-			rows = _db.level_board(int(tab), sort_by, filter, 5 if target == "preview" else 100)
+			var nivel := int(tab)
+			rows = _db.level_board_around(nivel, _player_id, sort_by) if near else _db.level_board(nivel, sort_by, filter, limit)
+			goal = _level_goal(nivel)
+			if target == "preview":
+				rows = _append_me(rows, _db.level_board_around(nivel, _player_id, sort_by, 0) if _player_id >= 0 else [])
 	if target == "preview":
 		_hud.set_board_preview(tab, rows, _db.is_available())
 	else:
-		_hud.set_board_rows(tab, rows, _db.is_available(), _db.file_path())
+		_hud.set_board_rows(tab, rows, _db.is_available(), _db.file_path(), goal)
+
+
+# El resumen muestra los primeros; si el jugador no esta, se anade su fila.
+static func _append_me(rows: Array, me: Array) -> Array:
+	if me.is_empty():
+		return rows
+	for r in rows:
+		if int(r["puesto"]) == int(me[0]["puesto"]):
+			return rows
+	return rows + me
+
+
+# Franja de objetivo de un nivel: puesto, rival de arriba y tiempo de oro.
+func _level_goal(nivel: int) -> Dictionary:
+	if _player_id < 0:
+		return {}
+	var best: Dictionary = _db.personal_best(_player_id, nivel)
+	if best.is_empty():
+		return {}
+	var rank: Dictionary = _db.rank_of(nivel, _player_id)
+	var goal := {
+		"puesto": rank.get("puesto", 0),
+		"total": rank.get("total", 0),
+		"tiempo_ms": best["tiempo_ms"],
+		"par_ms": _par_ms(nivel),
+	}
+	var rival: Dictionary = _db.rival_above(nivel, _player_id)
+	if not rival.is_empty():
+		goal["rival"] = rival["nickname"]
+		goal["rival_ms"] = rival["tiempo_ms"]
+		goal["rival_puesto"] = rival["puesto"]
+	return goal
+
+
+# Tiempo de oro (par) de un nivel 1..n en milisegundos.
+func _par_ms(nivel: int) -> int:
+	if nivel < 1 or nivel > levels.size():
+		return 0
+	return int(float(_read_level_data(nivel - 1).get("par_time", 0.0)) * 1000.0)
+
+
+# Estadisticas de un jugador, con lo necesario para comparar: el perfil del
+# jugador actual, el lider de cada nivel y el tiempo de oro de cada nivel.
+func _on_profile_requested(nickname: String) -> void:
+	if not _db.is_available() or nickname == "":
+		return
+	var profile: Dictionary = _db.player_profile(nickname)
+	if profile.is_empty():
+		return
+	var mine: Dictionary = {}
+	if _nickname != "" and _nickname.to_lower() != nickname.to_lower():
+		mine = _db.player_profile(_nickname)
+	var leaders := {}
+	var pars := {}
+	for i in levels.size():
+		var top: Array = _db.level_board(i + 1, "tiempo", "", 1)
+		if not top.is_empty():
+			leaders[i + 1] = top[0]
+		pars[i + 1] = _par_ms(i + 1)
+	_hud.show_profile(profile, mine, leaders, pars)
 
 
 # Valida el nickname escrito en el menu y registra al jugador.
@@ -913,7 +1056,13 @@ func _confirm_nickname() -> bool:
 	if cleaned != _nickname:
 		_nickname = cleaned
 		_save_progress()
-	_player_id = _db.ensure_player(_nickname)
+	var player_id: int = _db.ensure_player(_nickname)
+	# Una sesion por jugador desde que se abre el juego; cambiar de nickname
+	# abre otra.
+	if player_id != _player_id or _session_id < 0:
+		_db.end_session(_session_id)
+		_session_id = _db.begin_session(player_id)
+	_player_id = player_id
 	_hud.set_nickname(_nickname)
 	return true
 

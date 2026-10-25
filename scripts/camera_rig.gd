@@ -60,6 +60,19 @@ var _rain: CPUParticles3D = null
 var _dip := 0.0
 var _dip_velocity := 0.0
 
+@export_group("Screenshake")
+## Desvanecimiento del trauma por segundo.
+@export var trauma_decay := 1.6
+## Maximo desplazamiento local de la camara con trauma maximo (m).
+@export var max_shake_offset := Vector3(0.25, 0.22, 0.15)
+## Maxima rotacion local de la camara con trauma maximo (grados: pitch, yaw, roll).
+@export var max_shake_rot_deg := Vector3(2.0, 2.0, 3.5)
+## Frecuencia de oscilacion de la vibracion.
+@export var shake_frequency := 36.0
+
+var _trauma := 0.0
+var _shake_time := 0.0
+
 
 func set_look_enabled(value: bool) -> void:
 	look_enabled = value
@@ -187,12 +200,17 @@ func _physics_process(delta: float) -> void:
 	pos.y = maxf(pos.y, water_y + WATER_MARGIN)
 	global_position = pos
 	_update_dip(delta)
+	_update_screenshake(delta)
 
 
 # Colocacion instantanea: al empezar un nivel y al reaparecer.
 func snap_to_target() -> void:
 	_dip = 0.0
 	_dip_velocity = 0.0
+	_trauma = 0.0
+	if _camera != null:
+		_camera.position = Vector3.ZERO
+		_camera.rotation = Vector3.ZERO
 	if _pitch != null:
 		_pitch.position = Vector3.ZERO
 	if _target == null:
@@ -200,10 +218,28 @@ func snap_to_target() -> void:
 	global_position = _target.global_position + Vector3(0.0, pivot_height, 0.0)
 
 
+## Anade trauma de screenshake (0.0 a 1.0). El efecto real escala cuadraticamente.
+func add_trauma(amount: float) -> void:
+	_trauma = clampf(_trauma + amount, 0.0, 1.0)
+
+
+## Atajo por compatibilidad.
+func shake(amount: float) -> void:
+	add_trauma(amount)
+
+
+func get_trauma() -> float:
+	return _trauma
+
+
 # El jugador lo llama al aterrizar con la velocidad de caida (m/s).
 func add_impact(fall_speed: float) -> void:
 	var strength := clampf((fall_speed - 8.0) / 12.0, 0.0, 1.0)
 	_dip_velocity -= strength * impact_strength * 20.0
+	# Si el aterrizaje es fuerte, aplicamos screenshake proporcional
+	if fall_speed > 5.5:
+		var hard_strength := clampf((fall_speed - 5.5) / 16.0, 0.0, 1.0)
+		add_trauma(hard_strength * 0.65)
 
 
 # Muelle algo menos que amortiguado: baja, rebota un poco y se asienta.
@@ -213,6 +249,30 @@ func _update_dip(delta: float) -> void:
 	_dip_velocity += (-_dip * 120.0 - _dip_velocity * 15.0) * delta
 	_dip += _dip_velocity * delta
 	_pitch.position = Vector3(0.0, _dip, 0.0)
+
+
+## Vibracion no lineal de camara (screenshake)
+func _update_screenshake(delta: float) -> void:
+	if _camera == null:
+		return
+	if _trauma <= 0.0:
+		_camera.position = Vector3.ZERO
+		_camera.rotation = Vector3.ZERO
+		return
+
+	_trauma = maxf(0.0, _trauma - trauma_decay * delta)
+	var intensity := _trauma * _trauma
+	_shake_time += delta * shake_frequency
+
+	var ox := (sin(_shake_time * 1.0) + sin(_shake_time * 2.37) * 0.45) * max_shake_offset.x * intensity
+	var oy := (cos(_shake_time * 1.25) + sin(_shake_time * 2.81) * 0.45) * max_shake_offset.y * intensity
+	var oz := sin(_shake_time * 1.83) * max_shake_offset.z * intensity
+	_camera.position = Vector3(ox, oy, oz)
+
+	var rx := deg_to_rad(max_shake_rot_deg.x) * sin(_shake_time * 1.41) * intensity
+	var ry := deg_to_rad(max_shake_rot_deg.y) * cos(_shake_time * 1.13) * intensity
+	var rz := deg_to_rad(max_shake_rot_deg.z) * sin(_shake_time * 2.19) * intensity
+	_camera.rotation = Vector3(rx, ry, rz)
 
 
 # El brazo de la camara no debe chocar con el propio jugador: si lo hace, se

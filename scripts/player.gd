@@ -30,8 +30,8 @@ const STEP_MIN_SPEED := 1.5
 @export var jump_velocity := 10.0
 @export var gravity := 20.0
 @export var turn_speed := 14.0
-@export var coyote_time := 0.14
-@export var jump_buffer_time := 0.14
+@export var coyote_time := 0.18
+@export var jump_buffer_time := 0.18
 @export var fall_y := -18.0
 ## Altura del mar. Al cruzarla el jugador se hunde en vez de morir en seco.
 @export var sea_y := -INF
@@ -137,7 +137,8 @@ func _physics_process(delta: float) -> void:
 	else:
 		_coyote = maxf(0.0, _coyote - delta)
 
-	if Input.is_action_just_pressed("jump_primary"):
+	var jump_just_pressed := Input.is_action_just_pressed("jump_primary") or Input.is_action_just_pressed("jump")
+	if jump_just_pressed:
 		_buffer = jump_buffer_time
 	else:
 		_buffer = maxf(0.0, _buffer - delta)
@@ -175,11 +176,12 @@ func _physics_process(delta: float) -> void:
 		_launched = false
 		_buffer = 0.0
 		_coyote = 0.0
-		_play_sfx("jump", -6.0)
+		_play_sfx("jump", -6.0, randf_range(0.95, 1.05))
 		_on_jump()
 
 	# Salto variable: soltar el boton subiendo corta el impulso.
-	if Input.is_action_just_released("jump_primary") and velocity.y > 0.0 and not _launched:
+	var jump_just_released := Input.is_action_just_released("jump_primary") or Input.is_action_just_released("jump")
+	if jump_just_released and velocity.y > 0.0 and not _launched:
 		velocity.y *= 0.45
 
 	# move_and_slide pone velocity.y a 0 al tocar suelo; la fuerza del impacto
@@ -191,6 +193,13 @@ func _physics_process(delta: float) -> void:
 	if on_floor and not _was_on_floor:
 		_launched = false
 		_on_land(fall_speed)
+		# Input buffering: ejecucion inmediata al hacer contacto con el suelo
+		if _buffer > 0.0:
+			velocity.y = boost_jump_velocity if _boost_time > 0.0 else jump_velocity
+			_buffer = 0.0
+			_coyote = 0.0
+			_play_sfx("jump", -6.0, randf_range(0.95, 1.05))
+			_on_jump()
 	_was_on_floor = on_floor
 
 	_face_movement(delta)
@@ -276,6 +285,7 @@ func _on_land(fall_speed: float) -> void:
 	var strength := clampf(fall_speed / 30.0, 0.0, 1.0)
 	_squash = 1.0 - lerpf(0.06, max_land_squash, strength)
 	_burst_dust()
+	_play_sfx("land", lerpf(-14.0, -3.0, strength), randf_range(0.9, 1.1))
 	if _yaw != null and _yaw.has_method("add_impact"):
 		_yaw.call("add_impact", fall_speed)
 	# Parado, se ve el clip de aterrizaje; en carrera se pasa directo a correr
@@ -478,10 +488,10 @@ func _make_particles(node_name: String, amount: int, life: float, radius: float,
 # --- Sonido ------------------------------------------------------------------
 
 # El Main es dueno del pool de audio; el jugador solo se lo pide.
-func _play_sfx(sound_name: String, volume_db: float = 0.0) -> void:
+func _play_sfx(sound_name: String, volume_db: float = 0.0, pitch: float = 1.0) -> void:
 	var main := get_parent()
 	if main != null and main.has_method("play_sfx"):
-		main.call("play_sfx", sound_name, volume_db)
+		main.call("play_sfx", sound_name, volume_db, pitch)
 
 
 # Pisadas ritmicas: solo en el suelo y con velocidad suficiente. Al parar se
@@ -494,7 +504,7 @@ func _update_footsteps(delta: float) -> void:
 	_step_timer -= delta
 	if _step_timer <= 0.0:
 		_step_timer = STEP_INTERVAL
-		_play_sfx("step", -13.0)
+		_play_sfx("step", -13.0, randf_range(0.92, 1.08))
 
 
 # --- Muerte y reaparicion ----------------------------------------------------
