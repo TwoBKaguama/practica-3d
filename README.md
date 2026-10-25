@@ -1,5 +1,10 @@
 # Aventura de Estrellas
 
+Enlace a video 
+
+https://drive.google.com/file/d/1TSrO3tuekLuTwFrSHfs7BSmJoPaPYXUE/view?usp=drive_link
+
+
 Plataformas 3D hecho con Godot 4.7 (renderer Compatibility). Corre por islas
 sobre el mar, recoge estrellas, busca la gema secreta de cada nivel y no te
 caigas al agua.
