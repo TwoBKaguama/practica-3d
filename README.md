@@ -53,3 +53,12 @@ proporción:
   `canvas_items` + `expand`).
 - En ventanas altas o estrechas la cámara abre su campo de visión horizontal
   para no dar sensación de zoom.
+
+
+<img width="3372" height="1258" alt="Captura desde 2026-10-24 22-55-23" src="https://github.com/user-attachments/assets/65d9d1ed-7dcd-4386-9d7d-15921a536b2f" />
+
+
+<img width="3372" height="1258" alt="Captura desde 2026-10-24 22-54-46" src="https://github.com/user-attachments/assets/524555b1-24bc-440a-9e8d-67f51951fa87" />
+
+
+<img width="2353" height="1375" alt="Captura desde 2026-10-24 22-54-40" src="https://github.com/user-attachments/assets/a89983c7-4cd5-41f9-9692-d58be1c0371e" />
